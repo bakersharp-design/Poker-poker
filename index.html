@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Texas Hold'em Poker</title>
+<style>
+  body {
+    background-color: green;
+    font-family: Arial, sans-serif;
+    color: white;
+    text-align: center;
+    margin: 0;
+    padding: 20px;
+  }
+  #table {
+    margin: 20px auto;
+    width: 900px;
+    border: 4px solid white;
+    border-radius: 15px;
+    background-color: #064d00;
+    padding: 20px;
+  }
+  .hand {
+    margin: 10px 0;
+  }
+  .card {
+    width: 60px;
+    height: 90px;
+    margin: 4px;
+    vertical-align: middle;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px black;
+  }
+  button {
+    padding: 10px 20px;
+    margin: 10px 5px;
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: 8px;
+    border: none;
+    background-color: #006600;
+    color: white;
+    font-weight: bold;
+  }
+  button:hover {
+    background-color: #004400;
+  }
+  #bank, #pot, #status {
+    font-size: 20px;
+    margin: 10px;
+    font-weight: bold;
+  }
+  #chips-container {
+    display: flex;
+    justify-content: center;
+    gap: 100px;
+    margin-bottom: 15px;
+  }
+  #chips-container > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .chip {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 2px solid black;
+    box-shadow: inset 0 0 8px white;
+  }
+  .red { background: red; }
+  .blue { background: blue; }
+  .green { background: green; }
+  .white { background: white; }
+  .black { background: black; }
+  #dealer-icon, #player-icon {
+    font-size: 28px;
+    vertical-align: middle;
+    margin-left: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Texas Hold'em Poker</h1>
+<div id="bank">Player Bank: $1000</div>
+<div id="pot">Pot: $0</div>
+<div id="status">Press "Start Game" to play</div>
+
+<div id="chips-container">
+  <div>
+    Your Chips:
+    <div id="player-chips"></div>
+  </div>
+  <div>
+    Pot Chips:
+    <div id="pot-chips"></div>
+  </div>
+</div>
+
+<div id="table">
+  <h2>Community Cards</h2>
+  <div id="community-cards" class="hand"></div>
+
+  <h2>Dealer <span id="dealer-icon">👤</span> Hand</h2>
+  <div id="dealer-hand" class="hand"></div>
+
+  <h2>Player <span id="player-icon">🧑‍🎤</span> Hand</h2>
+  <div id="player-hand" class="hand"></div>
+</div>
+
+<div>
+  <button onclick="startGame()">Start Game</button>
+  <button onclick="playerAction('check')" id="check-btn" disabled>Check</button>
+  <button onclick="playerAction('raise')" id="raise-btn" disabled>Raise $100</button>
+  <button onclick="playerAction('fold')" id="fold-btn" disabled>Fold</button>
+</div>
+
+<script>
+  const suits = ['♠', '♥', '♦', '♣'];
+  const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+
+  let deck = [];
+  let playerHand = [];
+  let dealerHand = [];
+  let communityCards = [];
+  let pot = 0;
+  let playerBank = 1000;
+  let stage = 0; // 0 = preflop, 1 = flop, 2 = turn, 3 = river, 4 = showdown
+  let playerHasActed = false;
+
+  // Helper to create and shuffle deck
+  function createDeck() {
+    deck = [];
+    for (let s of suits) {
+      for (let r of ranks) {
+        deck.push({suit: s, rank: r});
+      }
+    }
+  }
+  function shuffleDeck() {
+    for(let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+  }
+  function dealCard() {
+    return deck.pop();
+  }
+
+  // Card SVG source generator (simple, from github repo)
+  function getCardUrl(card) {
+    const rankMap = {'10':'T', 'J':'J', 'Q':'Q', 'K':'K', 'A':'A'};
+    const r = rankMap[card.rank] || card.rank;
+    const s = {'♠':'S', '♥':'H', '♦':'D', '♣':'C'}[card.suit];
+    return `https://raw.githubusercontent.com/backspace/svg-cards/main/cards/${r}${s}.svg`;
+  }
+
+  function renderCards(containerId, cards, hideDealer=false) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    cards.forEach((card, i) => {
+      const img = document.createElement('img');
+      img.className = 'card';
+      if(hideDealer && containerId === 'dealer-hand' && i === 1) {
+        // Hide dealer's second card before showdown
+        img.src = 'https://raw.githubusercontent.com/backspace/svg-cards/main/cards/back.svg';
+      } else {
+        img.src = getCardUrl(card);
+      }
+      container.appendChild(img);
+    });
+  }
+
+  // Chip rendering for bank and pot
+  function renderChips(containerId, amount) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    const chipValues = [100, 50, 25, 10, 5, 1];
+    const chipColors = {
+      100: 'red',
+      50: 'blue',
+      25: 'green',
+      10: 'black',
+      5: 'white',
+      1: 'red',
+    };
+    let left = amount;
+    for (let val of chipValues) {
+      while(left >= val) {
+        const chip = document.createElement('div');
+        chip.className = 'chip ' + chipColors[val];
+        chip.title = '$' + val;
+        container.appendChild(chip);
+        left -= val;
+      }
+    }
+  }
+
+  function updateDisplay() {
+    document.getElementById('bank').innerText = `Player Bank: $${playerBank}`;
+    document.getElementById('pot').innerText = `Pot: $${pot}`;
+    renderCards('community-cards', communityCards);
+    renderCards('player-hand', playerHand);
+    renderCards('dealer-hand', dealerHand, stage < 4);
+    renderChips('player-chips', playerBank);
+    renderChips('pot-chips', pot);
+  }
+
+  function startGame() {
+    if(playerBank < 100) {
+      alert("You don't have enough money to play!");
+      return;
+    }
+    stage = 0;
+    pot = 0;
+    communityCards = [];
+    createDeck();
+    shuffleDeck();
+    playerHand = [dealCard(), dealCard()];
+    dealerHand = [dealCard(), dealCard()];
+    pot += 200;
+    playerBank -= 100;
+    updateDisplay();
+    setStatus("Game started! Your move.");
+    enablePlayerButtons(true);
+  }
+
+  function enablePlayerButtons(enable) {
+    document.getElementById('check-btn').disabled = !enable;
+    document.getElementById('raise-btn').disabled = !enable;
+    document.getElementById('fold-btn').disabled = !enable;
+  }
+
+  function setStatus(msg) {
+    document.getElementById('status').innerText = msg;
+  }
+
+  function playerAction(action) {
+    if (stage >= 4) {
+      setStatus("Round over. Start new game.");
+      return;
+    }
+    if(action === 'fold') {
+      setStatus("You folded! Dealer wins.");
+      enablePlayerButtons(false);
+      endRound(false);
+      return;
+    }
+    if(action === 'raise') {
+      if(playerBank < 100) {
+        alert("Not enough chips to raise!");
+        return;
+      }
+      pot += 100;
+      playerBank -= 100;
+      setStatus("You raised $100. Dealer's turn...");
+    } else if(action === 'check') {
+      setStatus("You checked. Dealer's turn...");
+    }
+    enablePlayerButtons(false);
+    dealerTurn();
+  }
+
+  function dealerTurn() {
+    setTimeout(() => {
+      if(stage === 0) {
+        // Flop
+        communityCards.push(dealCard(), dealCard(), dealCard());
+        stage = 1;
+        setStatus("Flop dealt. Your move.");
+        updateDisplay();
+        enablePlayerButtons(true);
+      } else if(stage === 1) {
+        // Turn
+        communityCards.push(dealCard());
+        stage = 2;
+        setStatus("Turn dealt. Your move.");
+        updateDisplay();
+        enablePlayerButtons(true);
+      } else if(stage === 2) {
+        // River
+        communityCards.push(dealCard());
+        stage = 3;
+        setStatus("River dealt. Your move.");
+        updateDisplay();
+        enablePlayerButtons(true);
+      } else if(stage === 3) {
+        // Showdown
+        stage = 4;
+        updateDisplay();
+        setStatus("Showdown! Evaluating hands...");
+        setTimeout(() => {
+          evaluateWinner();
+        }, 1500);
+      }
+    }, 1000);
+  }
+
+  // Hand evaluation functions:
+  function evaluateWinner() {
+    // Returns a numeric score to compare hands (higher is better)
+    const playerScore = getBestHandScore(playerHand.concat(communityCards));
+    const dealerScore = getBestHandScore(dealerHand.concat(communityCards));
+    console.log("Player score:", playerScore, "Dealer score:", dealerScore);
+
+    if(playerScore > dealerScore) {
+      setStatus("You win! You gain the pot.");
+      playerBank += pot;
+    } else if(playerScore < dealerScore) {
+      setStatus("Dealer wins! Better luck next time.");
+    } else {
+      setStatus("It's a tie! Pot split.");
+      playerBank += pot / 2;
+    }
+    pot = 0;
+    updateDisplay();
+    enablePlayerButtons(false);
+  }
+
+  // Scoring helper functions (simplified poker hand evaluator)
+  // Returns numeric score: category*1,000,000 + high card values
+  function getBestHandScore(cards) {
+    const combos = getCombinations(cards, 5);
+    let best = 0;
+    for(let hand of combos) {
+      const score = scoreHand(hand);
+      if(score > best) best = score;
+    }
+    return best;
+  }
+
+  function getCombinations(arr, k) {
+    const results = [];
+    function combi(start, chosen) {
+      if(chosen.length === k) {
+        results.push(chosen);
+        return;
+      }
+      for(let i = start; i < arr.length; i++) {
+        combi(i+1, chosen.concat([arr[i]]));
+      }
+    }
+    combi(0, []);
+    return results;
+  }
+
+  function rankToVal(rank) {
+    if(rank === 'A') return 14;
+    if(rank === 'K') return 13;
+    if(rank === 'Q') return 12;
+    if(rank === 'J') return 11;
+    return parseInt(rank);
+  }
+
+  function isFlush(cards) {
+    const suit = cards[0].suit;
+    return cards.every(c => c.suit === suit);
+  }
+
+  function isStraight(values) {
+    values.sort((a,b) => b - a);
+    for(let i = 0; i < values.length - 1; i++) {
+      if(values[i] - values[i+1] !== 1) return false;
+    }
+    return true;
+  }
+
+  function countRanks(cards) {
+    const counts = {};
+    cards.forEach(c => counts[c.rank] = (counts[c.rank] || 0) + 1);
+    return counts;
+  }
+
+  function scoreHand(cards) {
+    const values = cards.map(c => rankToVal(c.rank)).sort((a,b) => b - a);
+    const flush = isFlush(cards);
+    let straight = false;
+
+    // Check special wheel straight A-2-3-4-5
+    const uniqueVals = [...new Set(values)];
+    if(uniqueVals.length === 5) {
+      straight = isStraight(values) || (uniqueVals.includes(14) && uniqueVals.includes(2) && uniqueVals.includes(3) && uniqueVals.includes(4) && uniqueVals.includes(5));
+    }
+
+    const counts = Object.values(countRanks(cards)).sort((a,b) => b - a);
+    const ranksCount = countRanks(cards);
+
+    // Ranking categories:
+    // 9 = Royal Flush, 8 = Straight Flush, 7 = Four of a Kind,
+    // 6 = Full House, 5 = Flush, 4 = Straight,
+    // 3 = Three of a Kind, 2 = Two Pair, 1 = One Pair, 0 = High Card
+
+    // Royal Flush
+    if(flush && straight && Math.min(...values) === 10) return 9000000;
+
+    // Straight Flush
+    if(flush && straight) return 8000000 + Math.max(...values);
+
+    // Four of a kind
+    if(counts[0] === 4) {
+      const quadVal = parseInt(Object.keys(ranksCount).find(k => ranksCount[k] === 4));
+      return 7000000 + quadVal*15 + kicker(values, [quadVal]);
+    }
+
+    // Full House
+    if(counts[0] === 3 && counts[1] === 2) {
+      const tripleVal = parseInt(Object.keys(ranksCount).find(k => ranksCount[k] === 3));
+      const pairVal = parseInt(Object.keys(ranksCount).find(k => ranksCount[k] === 2));
+      return 6000000 + tripleVal*15 + pairVal;
+    }
+
+    // Flush
+    if(flush) return 5000000 + kicker(values, []);
+
+    // Straight
+    if(straight) return 4000000 + Math.max(...values);
+
+    // Three of a kind
+    if(counts[0] === 3) {
+      const tripleVal = parseInt(Object.keys(ranksCount).find(k => ranksCount[k] === 3));
+      return 3000000 + tripleVal*15 + kicker(values, [tripleVal]);
+    }
+
+    // Two pair
+    if(counts[0] === 2 && counts[1] === 2) {
+      const pairs = Object.keys(ranksCount).filter(k => ranksCount[k] === 2).map(k => parseInt(k)).sort((a,b)=>b-a);
+      const single = parseInt(Object.keys(ranksCount).find(k => ranksCount[k] === 1));
+      return 2000000 + pairs[0]*225 + pairs[1]*15 + single;
+    }
+
+    // One pair
+    if(counts[0] === 2) {
+      const pairVal = parseInt(Object.keys(ranksCount).find(k => ranksCount[k] === 2));
+      return 1000000 + pairVal*15 + kicker(values, [pairVal]);
+    }
+
+    // High card
+    return kicker(values, []);
+  }
+
+  function kicker(values, exclude) {
+    return values.filter(v => !exclude.includes(v)).slice(0,5).reduce((acc,v) => acc*15 + v, 0);
+  }
+
+</script>
+</body>
+</html>
